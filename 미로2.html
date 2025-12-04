@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>1인칭 미로 중앙 정렬 버전</title>
+<style>
+    body {
+        background: #222;
+        color: white;
+        font-family: sans-serif;
+        text-align: center;
+        padding-top: 18vh;
+    }
+
+    /* ====== 네모 게임 화면 ====== */
+    #view {
+    width: 400px;  /* 🔥 여기만 바꾸면 전체 스케일 변화 */
+    aspect-ratio: 1 / 1;
+    background: #111;
+    border: 0.2vw solid #444;
+    margin: 0 auto;
+    position: relative;
+    overflow: hidden;
+    border-radius: 1vw;
+}
+
+    /* ====== 문 공통 스타일 ====== */
+    .door {
+    position: absolute;
+    object-fit: cover;
+    cursor: pointer;
+    transition: transform 0.15s ease, filter 0.15s ease;
+    user-select: none;
+}
+
+/* 정면(front) — 중앙 위 */
+#frontDoor {
+    width: 42%;
+    height: 50%;
+    left: 50%;
+    top: 32%;
+    transform: translate(-50%, -50%);
+}
+
+/* 왼쪽(left) — 더 왼쪽에 붙임 */
+#leftDoor {
+    width: 30%;
+    height: 44%;
+    left: 2%;
+    top: 62%;
+    transform: translateY(-50%);
+}
+
+/* 오른쪽(right) — 더 오른쪽에 붙임 */
+#rightDoor {
+    width: 30%;
+    height: 44%;
+    right: 2%;
+    top: 62%;
+    transform: translateY(-50%);
+}
+
+.door:hover {
+    transform: scale(1.05);
+    filter: brightness(1.15);
+}
+    /* ====== 뒤로가기 버튼 ====== */
+#backBtn {
+    position: absolute;
+    bottom: 3%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.6em 1.2em;   /* 🔥 텍스트 기반 크기 → 텍스처 유지 */
+    background: rgba(0,0,0,0.6);
+    color: white;
+    border: none;
+    border-radius: 8px;     /* 둥근 모서리 유지 */
+    cursor: pointer;
+    font-size: clamp(10px, 1.2vw, 20px); /* 반응형 폰트(과도한 변화 방지) */
+    backdrop-filter: blur(3px); /* 🔥 유리 느낌 */
+    transition: background 0.2s, transform 0.2s;
+}
+
+#backBtn:hover {
+    background: rgba(0,0,0,0.8);
+    transform: translateX(-50%) scale(1.05); /* 살짝 확대 원래 느낌 */
+}
+
+    /* ====== 전체 미로 지도 ====== */
+    #map {
+    margin-top: 30px;
+    display: grid;
+    gap: 2px;
+    width: 440px;        /* 더 큼 */
+    height: 440px;       /* 더 큼 */
+    overflow: auto;      /* 미로가 커지면 스크롤 */
+    border: 3px solid #555;
+    background: #000;
+    padding: 5px;
+
+    position: fixed;
+    right: 20px;
+    top: 20px;
+}
+.cell {
+    width: 20px;
+    height: 20px;
+    background: #666;
+}
+.wall { background: #222; }
+.player { background: yellow; }
+</style>
+</head>
+<body>
+
+<h2>1인칭 미로</h2>
+
+<div id="view">
+    <img id="frontDoor" class="door">
+    <img id="leftDoor" class="door">
+    <img id="rightDoor" class="door">
+
+    <button id="backBtn" onclick="goBack()">뒤로가기</button>
+</div>
+
+<h3>전체 미로</h3>
+<div id="map"></div>
+
+<button id="toggleMapBtn" style="position:fixed; right:20px; bottom:20px;">미니맵 토글</button>
+
+<script>
+    let facing = "N";
+    const turnLeft  = { N:"W", W:"S", S:"E", E:"N" };
+const turnRight = { N:"E", E:"S", S:"W", W:"N" };
+
+let history = [];
+
+/* ==== 미로 데이터 ==== */
+const maze = {
+    "0,0": { N:"0,1", S:null, W:null, E:"1,0" },
+    "0,1": { N:"0,2", S:"0,0", W:null, E:null },
+    "1,0": { N:null, S:null, W:"0,0", E:"2,0" },
+    "2,0": { N:"2,1", S:"2,-1", W:null, E:"3,0" },
+    "3,0": { N:null, S:null, W:"2,0", E:"EXIT" },
+    "2,1": { N:"2,2", S:"2,0", W:null, E:null },
+    "2,2": { N:null, S:"2,1", W:"1,2", E:null },
+    "2,-1": { N:"2,0", S:null, W:null, E:null },
+    "1,2": { N:null, S:null, W:"0,2", E:"2,2" },
+    "0,2": { N:null, S:"0,1", W:null, E:"1,2" },
+    "10,10": { N:null, S:null, W:null, E:null },
+    
+};
+
+let px = 0, py = 0;
+let historyStack = [];
+
+const imgOpen  = "https://via.placeholder.com/600x800/6b8/fff?text=OPEN";
+const imgClose = "https://via.placeholder.com/600x800/333/fff?text=BLOCKED";
+
+// 🔥 [추가] 출구 이미지와 이동할 페이지 주소
+const imgExit  = "https://via.placeholder.com/600x800/f80/fff?text=EXIT+DOOR"; 
+const exitUrl  = "https://www.google.com"; // 이동할 임시 페이
+
+const viewMap = {
+    N: { front: "N", left: "W", right: "E" }, // 북쪽 볼 때: 좌=서, 우=동 (정상)
+    S: { front: "S", left: "E", right: "W" }, // 남쪽 볼 때: 좌=동, 우=서 (정상)
+    
+    // 👇 여기가 수정되었습니다 (기존과 반대로 변경)
+    E: { front: "E", left: "N", right: "S" }, // 동쪽 볼 때: 좌=북, 우=남
+    W: { front: "W", left: "S", right: "N" }  // 서쪽 볼 때: 좌=남, 우=북
+};
+
+/* ==== 문 업데이트 ==== */
+function updateDoors() {
+    const room = maze[`${px},${py}`];
+    const map = viewMap[facing];
+
+    setDoor(frontDoor, room[map.front]);
+    setDoor(leftDoor, room[map.left]);
+    setDoor(rightDoor, room[map.right]);
+}
+
+function setDoor(doorImg, nextRoom) {
+    // 🔥 [수정] nextRoom이 "EXIT"인 경우 처리 추가
+    if (nextRoom === "EXIT") {
+        doorImg.src = imgExit;       // 출구 전용 이미지
+        doorImg.style.opacity = 1;
+        doorImg.style.pointerEvents = "auto";
+    } 
+    else if (nextRoom) {
+        doorImg.src = imgOpen;       // 일반 길 이미지
+        doorImg.style.opacity = 1;
+        doorImg.style.pointerEvents = "auto";
+    } 
+    else {
+        doorImg.src = imgClose;      // 벽 이미지
+        doorImg.style.opacity = 0.25;
+        doorImg.style.pointerEvents = "none";
+    }
+}
+
+/* ==== 이동 + 뒤로가기 스택 ==== */
+function moveTo(coord, dir) {
+    if (!coord) return; // 이동 불가면 방향도 바꾸지 않음
+
+// 🔥 [추가] "EXIT"를 클릭하면 페이지 이동!
+    if (coord === "EXIT") {
+        alert("축하합니다! 미로를 탈출합니다."); // (선택사항) 알림창
+        window.location.href = exitUrl;        // 페이지 이동
+        return;
+    }
+
+    history.push({ x: px, y: py, facing });
+
+    const [nx, ny] = coord.split(",").map(Number);
+    px = nx;
+    py = ny;
+
+    facing = dir; // 이동 성공한 경우에만 방향 변경
+
+    updateDoors();
+    drawMap();
+}
+
+function goBack() {
+    if (history.length === 0) return;
+
+    const last = history.pop();
+    px = last.x;
+    py = last.y;
+    facing = last.facing;
+
+    updateDoors();
+    drawMap();
+}
+const opposite = { N:"S", S:"N", E:"W", W:"E" };
+
+
+
+/* ==== 문 클릭 ==== */
+document.getElementById("frontDoor").onclick = () => {
+    const dir = viewMap[facing].front;
+    moveTo(maze[`${px},${py}`][dir], dir);
+};
+document.getElementById("leftDoor").onclick = () => {
+    const dir = viewMap[facing].left;
+    moveTo(maze[`${px},${py}`][dir], dir);
+};
+document.getElementById("rightDoor").onclick = () => {
+    const dir = viewMap[facing].right;
+    moveTo(maze[`${px},${py}`][dir], dir);
+};
+
+/* ==== 전체맵 ==== */
+function drawMap() {
+    const map = document.getElementById("map");
+
+    const coords = Object.keys(maze).map(k => k.split(",").map(Number));
+    const xs = coords.map(c => c[0]);
+    const ys = coords.map(c => c[1]);
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+
+    // 미니맵 초기화
+    map.innerHTML = "";
+
+    // 미로를 중앙 정렬시키기 위한 여백 계산
+    const paddingX = Math.floor((20 - width) / 2);
+    const paddingY = Math.floor((20 - height) / 2);
+
+    const gridX = Math.max(width, 20);
+    const gridY = Math.max(height, 20);
+
+    map.style.gridTemplateColumns = `repeat(${gridX}, 20px)`;
+
+    for (let y = 0; y < gridY; y++) {
+        for (let x = 0; x < gridX; x++) {
+            const div = document.createElement("div");
+            div.classList.add("cell");
+
+            // 미로의 실제 좌표에 해당하는 위치인지 계산
+            const realX = x - paddingX + minX;
+            const realY = maxY - (y - paddingY);
+
+            if (!maze[`${realX},${realY}`]) {
+                div.classList.add("wall");
+            }
+            if (px === realX && py === realY) {
+                div.classList.add("player");
+            }
+            map.appendChild(div);
+        }
+    }
+}
+
+document.getElementById("toggleMapBtn").onclick = () => {
+    const map = document.getElementById("map");
+    map.style.display = (map.style.display === "none") ? "grid" : "none";
+};
+
+updateDoors();
+drawMap();
+</script>
+
+</body>
+</html>
